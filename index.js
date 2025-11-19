@@ -17,10 +17,78 @@ app.use(express.static(STATIC_DIR));
 const data = GetConfig();
 const artists = [...new Set(data.map(x => x.artist))]
 
+app.use((req, res, next) => {
+    console.log(`${req.method} ${req.url}`);
+    next();
+});
+
 // ---- /json returns first JSON file ----
-app.get('/json', (req, res) => {
+app.get('/jsonAll', (req, res) => {
     try {
         return res.json(data)
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error' });
+    }
+});
+
+app.get('/json/:count/:page', (req, res) => {
+    try {
+        const page = parseInt(req.params.page) || 0;
+        const count = parseInt(req.params.count) || 20;
+
+        const start = page * count;
+        const end = start + count;
+
+        return res.json({
+            result: data.slice(start, end),
+            reachEnd: end >= data.length
+        })
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ error: 'Server error' });
+    }
+})
+
+app.get('/search', (req, res) => {
+    try {
+        const page = parseInt(req.query.page) || 0;
+        const count = parseInt(req.query.count) || 20;
+        const query = req.query.query;
+        const artists = [req.query.artists].filter(Boolean).flat(); // deal string or array
+
+        let result = data
+        if (query) {
+            let queryLower = query.toLowerCase()
+            result = result.filter(x => {
+                return x.title.toLowerCase().includes(queryLower) ||
+                    x.title_jpn?.toLowerCase()?.includes(queryLower)
+            })
+        }
+
+        if (artists && artists.length > 0) {
+            let filterResults = []
+            for (const artist of artists) {
+                let artistLower = artist.toLowerCase()
+                let currentResults = result.filter(x => x.artist.toLowerCase().includes(artistLower))
+                for (const currentResult of currentResults) {
+                    if (filterResults.find(x => x.title == currentResult.title)) {
+                        continue
+                    }
+
+                    filterResults.push(currentResult)
+                }
+            }
+            result = filterResults
+        }
+
+        const start = page * count;
+        const end = start + count;
+
+        return res.json({
+            result: result.slice(start, end),
+            reachEnd: end >= result.length
+        })
     } catch (err) {
         console.error(err);
         return res.status(500).json({ error: 'Server error' });
