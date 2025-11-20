@@ -37,7 +37,7 @@ app.get('/json/:count/:page', (req, res) => {
         const page = parseInt(req.params.page) || 0;
         const count = parseInt(req.params.count) || 20;
 
-        const start = page * count;
+        const start = (page - 1) * count;
         const end = start + count;
 
         return res.json({
@@ -82,7 +82,7 @@ app.get('/search', (req, res) => {
             result = filterResults
         }
 
-        const start = page * count;
+        const start = (page - 1) * count;
         const end = start + count;
 
         return res.json({
@@ -105,9 +105,9 @@ app.get('/artists', (req, res) => {
 });
 
 app.get('/details/:title', (req, res) => {
-    const targetTitle = req.params.title;
+    const title = req.params.title;
     try {
-        const match = data.find(item => item && item.title === targetTitle);
+        let match = data.find(item => item && (item.title === title || item.title_jpn === title));
         if (match) return res.json(match);
 
         // If nothing found
@@ -119,7 +119,7 @@ app.get('/details/:title', (req, res) => {
     }
 });
 
-app.get("/images/:title/:index", (req, res) => {
+app.get("/images/:title/:index/", (req, res) => {
     const { title, index } = req.params;
     const fileIndex = parseInt(index, 10) - 1; // 1-based from user → 0-based
 
@@ -127,7 +127,7 @@ app.get("/images/:title/:index", (req, res) => {
         return res.status(400).json({ error: "Invalid index" });
     }
 
-    const match = data.find(item => item && item.title === title);
+    let match = data.find(item => item && (item.title === title || item.title_jpn === title));
     if (!match) {
         return res.status(400).json({ error: "No match" });
     }
