@@ -218,8 +218,29 @@ function GetConfig () {
 
 }
 
+function ValidateTitle () {
+    let hasError = false
+    for (const entry of data) {
+        if (entry.title.includes('  ')) {
+            console.log(`Invalid title: ${entry.title}`)
+            hasError = true
+        }
+        if (entry.title_jpn?.includes('  ')) {
+            console.log(`Invalid title: ${entry.title_jpn}`)
+            hasError = true
+        }
+    }
+
+    return hasError
+}
+
 // ---- START SERVER ----
 const PORT = 3005;
-app.listen(PORT, () => {
-    console.log(`Server running at http://localhost:${PORT}`);
-});
+if (ValidateTitle()) {
+    console.log(`Try use regex to found invalid titles: ["title.*  ]`)
+}
+else {
+    app.listen(PORT, () => {
+        console.log(`Server running at http://localhost:${PORT}`);
+    });
+}
