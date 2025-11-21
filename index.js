@@ -237,7 +237,7 @@ function ValidateTitle () {
 // ---- START SERVER ----
 const PORT = 3005;
 if (ValidateTitle()) {
-    console.log(`Try use regex to found invalid titles: ["title.*  ]`)
+    console.log(`Try use regex to find invalid titles: ["title.*  ] (remove the brackets)`)
 }
 else {
     app.listen(PORT, () => {
