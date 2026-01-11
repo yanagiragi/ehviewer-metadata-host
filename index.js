@@ -132,7 +132,7 @@ app.get("/images/:title/:index/", (req, res) => {
         return res.status(400).json({ error: "No match" });
     }
 
-    const zipPath = path.join(ASSETS_DIR, match.localPath);
+    const zipPath = path.join(ASSETS_DIR, match.localPath.replace(/\\/g, '/'));
 
     // Open ZIP in streaming mode
     yauzl.open(zipPath, { lazyEntries: true }, (err, zipfile) => {
