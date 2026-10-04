@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const yauzl = require("yauzl");
 const mime = require("mime-types");
+const he = require('he');
 
 const app = express();
 
@@ -16,6 +17,22 @@ app.use(express.static(STATIC_DIR));
 // ---- GLOBAL VARIABLES -----
 const data = GetConfig();
 const artists = [...new Set(data.map(x => x.artist))]
+
+function MatchTitle (item, title) {
+    if (item.title == title) {
+        return true
+    }
+    if (item.title_jpn == title) {
+        return true
+    }
+    if (item.title && he.decode(item.title) == title) {
+        return true
+    }
+    if (item.title_jpn && he.decode(item.title_jpn) == title) {
+        return true
+    }
+    return false
+}
 
 app.use((req, res, next) => {
     console.log(`${req.method} ${req.url}`);
@@ -55,22 +72,22 @@ app.get('/search', (req, res) => {
         const page = parseInt(req.query.page) || 0;
         const count = parseInt(req.query.count) || 20;
         const query = req.query.query;
-        const artists = [req.query.artists].filter(Boolean).flat(); // deal string or array
+        const artistsQuery = [req.query.artists].filter(Boolean).flat(); // deal string or array
 
         let result = data
         if (query) {
             let queryLower = query.toLowerCase()
             result = result.filter(x => {
                 return x.title.toLowerCase().includes(queryLower) ||
-                    x.title_jpn?.toLowerCase()?.includes(queryLower)
+                    x.title_jpn?.toLowerCase()?.includes(queryLower) ||
+                    x.artist.toLowerCase().includes(queryLower)
             })
         }
 
-        if (artists && artists.length > 0) {
+        if (artistsQuery && artistsQuery.length > 0) {
             let filterResults = []
-            for (const artist of artists) {
-                let artistLower = artist.toLowerCase()
-                let currentResults = result.filter(x => x.artist.toLowerCase().includes(artistLower))
+            for (const artistQuery of artistsQuery) {
+                const currentResults = result.filter(x => x.artist.toLowerCase().includes(artistQuery.toLowerCase()))
                 for (const currentResult of currentResults) {
                     if (filterResults.find(x => x.title == currentResult.title)) {
                         continue
@@ -107,7 +124,7 @@ app.get('/artists', (req, res) => {
 app.get('/details/:title', (req, res) => {
     const title = req.params.title;
     try {
-        let match = data.find(item => item && (item.title === title || item.title_jpn === title));
+        let match = data.find(x => MatchTitle(x, title));
         if (match) return res.json(match);
 
         // If nothing found
@@ -127,7 +144,7 @@ app.get("/images/:title/:index/", (req, res) => {
         return res.status(400).json({ error: "Invalid index" });
     }
 
-    let match = data.find(item => item && (item.title === title || item.title_jpn === title));
+    let match = data.find(x => MatchTitle(x, title));
     if (!match) {
         return res.status(400).json({ error: "No match" });
     }
@@ -214,8 +231,32 @@ function GetConfig () {
     const filePath = path.join(ASSETS_DIR, latestFile);
     const content = fs.readFileSync(filePath, 'utf8');
 
-    return JSON.parse(content)
+    let nonExists = []
+    let result = JSON.parse(content)
+    result = result
+        .filter(x => {
+            const zipPath = path.join(ASSETS_DIR, x.localPath.replace(/\\/g, '/'));
+            if (fs.existsSync(zipPath)) {
+                return true
+            }
+            else {
+                nonExists.push(zipPath)
+                return false
+            }
+        })
 
+    result = result.sort((a, b) => a.artist.localeCompare(b.artist))
+
+    // '%' cause error when decodeURIComponent
+    for (let i = 0; i < result.length; ++i) {
+        if (result[i].title.includes('%')) {
+            result[i].title = result[i].title.replace(/%/g, '')
+        }
+    }
+
+    console.log(`nonExists = ${JSON.stringify(nonExists, null, 4)}`)
+
+    return result
 }
 
 function ValidateTitle () {
@@ -234,6 +275,42 @@ function ValidateTitle () {
     return hasError
 }
 
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args)); // 如果 Node <18 或 CommonJS
+
+async function downloadImage (url, path) {
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+
+        // 取得完整檔案
+        const arrayBuffer = await response.arrayBuffer();
+
+        // 寫入檔案
+        fs.writeFileSync(path, Buffer.from(arrayBuffer));
+
+        console.log('Download completed.');
+    } catch (err) {
+        console.error('Download failed:', err);
+    }
+}
+
+async function ValidateThumb () {
+    let hasError = false
+    for (let i = 0; i < data.length; ++i) {
+        const entry = data[i]
+        const thumb = entry.thumb
+        if (!thumb.startsWith('Thumbnail')) {
+            const gid = entry.gid
+            if (!fs.existsSync(`Thumbnail/${gid}.thumb`)) {
+                await downloadImage(thumb, `${gid}.thumb`)
+                console.log(`Download ${i}/${data.length} ${thumb}`)
+            }
+        }
+    }
+
+    return hasError
+}
+
 // ---- START SERVER ----
 const PORT = 3005;
 if (ValidateTitle()) {
@@ -242,5 +319,6 @@ if (ValidateTitle()) {
 else {
     app.listen(PORT, () => {
         console.log(`Server running at http://localhost:${PORT}`);
+        ValidateThumb()
     });
 }
