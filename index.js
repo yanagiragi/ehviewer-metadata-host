@@ -20,25 +20,24 @@ let data;
 let artists;
 
 function MatchTitle (item, title) {
-    if (item.title == title) {
-        return true
-    }
-    if (item.title_jpn == title) {
-        return true
-    }
-    if (item.title && he.decode(item.title) == title) {
-        return true
-    }
-    if (item.title_jpn && he.decode(item.title_jpn) == title) {
-        return true
-    }
-    return false
+    return [item.title, item.title_jpn]
+        .filter(Boolean)
+        .some(value => value == title || he.decode(value) == title)
 }
 
 app.use((req, res, next) => {
     console.log(`${req.method} ${req.url}`);
     next();
 });
+
+function ParsePagination (pageValue, countValue) {
+    const page = Number(pageValue ?? 1)
+    const count = Number(countValue ?? 20)
+
+    return Number.isInteger(page) && page > 0 && Number.isInteger(count) && count > 0
+        ? { page, count }
+        : null
+}
 
 // ---- /json returns first JSON file ----
 app.get('/jsonAll', (req, res) => {
@@ -52,8 +51,9 @@ app.get('/jsonAll', (req, res) => {
 
 app.get('/json/:count/:page', (req, res) => {
     try {
-        const page = parseInt(req.params.page) || 0;
-        const count = parseInt(req.params.count) || 20;
+        const pagination = ParsePagination(req.params.page, req.params.count)
+        if (!pagination) return res.status(400).json({ error: 'Invalid pagination' })
+        const { page, count } = pagination
 
         const start = (page - 1) * count;
         const end = start + count;
@@ -70,34 +70,27 @@ app.get('/json/:count/:page', (req, res) => {
 
 app.get('/search', (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 0;
-        const count = parseInt(req.query.count) || 20;
+        const pagination = ParsePagination(req.query.page, req.query.count)
+        if (!pagination) return res.status(400).json({ error: 'Invalid pagination' })
+        const { page, count } = pagination
         const query = req.query.query;
         const artistsQuery = [req.query.artists].filter(Boolean).flat(); // deal string or array
 
         let result = data
         if (query) {
-            let queryLower = query.toLowerCase()
-            result = result.filter(x => {
-                return x.title.toLowerCase().includes(queryLower) ||
-                    x.title_jpn?.toLowerCase()?.includes(queryLower) ||
-                    x.artist.toLowerCase().includes(queryLower)
-            })
+            const queryLower = query.toLowerCase()
+            result = result.filter(({ title, title_jpn, artist }) =>
+                [title, title_jpn, artist].some(value =>
+                    value?.toLowerCase().includes(queryLower)
+                )
+            )
         }
 
-        if (artistsQuery && artistsQuery.length > 0) {
-            let filterResults = []
-            for (const artistQuery of artistsQuery) {
-                const currentResults = result.filter(x => x.artist.toLowerCase().includes(artistQuery.toLowerCase()))
-                for (const currentResult of currentResults) {
-                    if (filterResults.find(x => x.title == currentResult.title)) {
-                        continue
-                    }
-
-                    filterResults.push(currentResult)
-                }
-            }
-            result = filterResults
+        if (artistsQuery.length > 0) {
+            const artistsQueryLower = artistsQuery.map(value => value.toLowerCase())
+            result = result.filter(({ artist }) =>
+                artistsQueryLower.some(value => artist.toLowerCase().includes(value))
+            )
         }
 
         const start = (page - 1) * count;
@@ -152,12 +145,22 @@ app.get("/images/:title/:index/", (req, res) => {
 
     const zipPath = path.join(ASSETS_DIR, match.localPath.replace(/\\/g, '/'));
 
+    const fail = (err, message) => {
+        console.error(err)
+        if (!res.headersSent) return res.status(500).json({ error: message })
+        if (!res.writableEnded) res.destroy(err)
+    }
+
     // Open ZIP in streaming mode
     yauzl.open(zipPath, { lazyEntries: true }, (err, zipfile) => {
         if (err) {
-            console.error(err);
-            return res.status(500).json({ error: "Failed to open zip file" });
+            return fail(err, "Failed to open zip file");
         }
+
+        zipfile.on("error", err => {
+            zipfile.close();
+            fail(err, "Failed reading zip file");
+        });
 
         let currentIndex = 0;
         let matched = false;
@@ -188,10 +191,19 @@ app.get("/images/:title/:index/", (req, res) => {
                 // Stream the file
                 zipfile.openReadStream(entry, (err, readStream) => {
                     if (err) {
-                        console.error(err);
-                        return res.status(500).json({ error: "Failed reading zip entry" });
+                        zipfile.close();
+                        return fail(err, "Failed reading zip entry");
                     }
 
+                    readStream.once("end", () => zipfile.close());
+                    readStream.once("error", err => {
+                        zipfile.close();
+                        fail(err, "Failed streaming zip entry");
+                    });
+                    res.once("close", () => {
+                        readStream.destroy();
+                        zipfile.close();
+                    });
                     readStream.pipe(res);
                 });
             } else {
@@ -310,7 +322,6 @@ async function downloadImage (url, path) {
 }
 
 async function ValidateThumb () {
-    let hasError = false
     for (let i = 0; i < data.length; ++i) {
         const entry = data[i]
         const thumb = entry.thumb
@@ -322,8 +333,6 @@ async function ValidateThumb () {
             }
         }
     }
-
-    return hasError
 }
 
 // ---- START SERVER ----
