@@ -10,13 +10,14 @@ const app = express();
 // ---- CONFIG ----
 const STATIC_DIR = path.join(__dirname, 'public');
 const ASSETS_DIR = path.join(STATIC_DIR, 'assets');
+const CONFIG_REFRESH_INTERVAL_MS = 5 * 60 * 60 * 1000; // 5 hours
 
 // ---- STATIC FILES ----
 app.use(express.static(STATIC_DIR));
 
 // ---- GLOBAL VARIABLES -----
-const data = GetConfig();
-const artists = [...new Set(data.map(x => x.artist))]
+let data;
+let artists;
 
 function MatchTitle (item, title) {
     if (item.title == title) {
@@ -218,7 +219,7 @@ function GetConfig () {
     );
 
     if (jsonFiles.length === 0) {
-        return res.status(404).json({ error: 'No JSON files found.' });
+        throw new Error('No JSON files found.');
     }
 
     // Sort descending by date in filename
@@ -259,9 +260,23 @@ function GetConfig () {
     return result
 }
 
-function ValidateTitle () {
+function RefreshConfig (currentData, getConfig = GetConfig) {
+    try {
+        const nextData = getConfig()
+        if (ValidateTitle(nextData)) {
+            throw new Error('Invalid titles found.')
+        }
+        return nextData
+    }
+    catch (err) {
+        console.error('Failed to refresh config; keeping previous data.', err)
+        return currentData
+    }
+}
+
+function ValidateTitle (entries = data) {
     let hasError = false
-    for (const entry of data) {
+    for (const entry of entries) {
         if (entry.title.includes('  ')) {
             console.log(`Invalid title: ${entry.title}`)
             hasError = true
@@ -313,12 +328,26 @@ async function ValidateThumb () {
 
 // ---- START SERVER ----
 const PORT = 3005;
-if (ValidateTitle()) {
-    console.log(`Try use regex to find invalid titles: ["title.*  ] (remove the brackets)`)
+if (require.main === module) {
+    data = GetConfig();
+    artists = [...new Set(data.map(x => x.artist))]
+    if (ValidateTitle()) {
+        console.log(`Try use regex to find invalid titles: ["title.*  ] (remove the brackets)`)
+    }
+    else {
+        app.listen(PORT, () => {
+            console.log(`Server running at http://localhost:${PORT}`);
+            ValidateThumb()
+        });
+
+        setInterval(() => {
+            const previousData = data
+            data = RefreshConfig(data)
+            if (data !== previousData) {
+                artists = [...new Set(data.map(x => x.artist))]
+            }
+        }, CONFIG_REFRESH_INTERVAL_MS)
+    }
 }
-else {
-    app.listen(PORT, () => {
-        console.log(`Server running at http://localhost:${PORT}`);
-        ValidateThumb()
-    });
-}
+
+module.exports = { RefreshConfig }
